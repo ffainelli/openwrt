@@ -24,6 +24,10 @@
 #include <linux/phy.h>
 #include <linux/clk.h>
 #include <linux/dma-mapping.h>
+#include <linux/ip.h>
+#include <linux/udp.h>
+#include <linux/tcp.h>
+#include <net/tcp.h>
 
 #include <asm/unaligned.h>
 #include <asm/sizes.h>
@@ -95,6 +99,21 @@
 #define  TX_DMA_ENH_ENABLE	(1 << 0)
 #define  TX_DMA_INT_FIFO	(1 << 1)
 
+/* TCP Offloading registers */
+#define TSO_BASE		(priv->tso_base)
+#define TSO_DATA_START_ADDR	(TSO_BASE + 0x00)
+#define TSO_TOTAL_DATA_SIZE	(TSO_BASE + 0x04)
+#define TSO_PAYLOAD_SIZE	(TSO_BASE + 0x08)
+#define TSO_HEADER_LEN		(TSO_BASE + 0x0C)
+#define TSO_IP_HEADER_LEN	(TSO_BASE + 0x10)
+#define TSO_TCP_HEADER_LEN	(TSO_BASE + 0x14)
+#define TSO_CTRL_REG		(TSO_BASE + 0x18)
+#define  TSO_CTRL_EN		(1 << 0)
+#define  TSO_CTRL_RUN		(1 << 1)
+#define  TSO_CTRL_IP_CHECK	(1 << 2)
+#define  TSO_CTRL_TCP_CHECK	(1 << 3)
+#define  TSO_CTRL_UDP_CHECK	(1 << 4)
+
 #define RX_ALLOC_SIZE		SZ_2K
 #define MAX_ETH_FRAME_SIZE	1536
 #define RX_SKB_TAILROOM		128
@@ -109,6 +128,8 @@
 			(1<<26) | (0<<31))
 #define  TX_RING_SIZE  30
 #define  RX_RING_SIZE  30
+
+#define TSO_PAYLOAD_THRESH	20
 
 static inline u32 nuport_mac_readl(void __iomem *reg)
 {
@@ -130,16 +151,29 @@ static inline void nuport_mac_writeb(u8 value, void __iomem *reg)
 	writel_relaxed(value, reg);
 }
 
+struct nuport_mac_tso_infos {
+	u32 total_data_size;
+	u32 segment_size;
+	u32 total_header_len;
+	u32 ip_hdr_len;
+	u32 tcp_udp_hdr_len;
+	u32 cmd;
+};
+
 /* MAC private data */
 struct nuport_mac_priv {
 	spinlock_t lock;
 
 	void __iomem	*mac_base;
 	void __iomem	*dma_base;
+	void __iomem	*tso_base;
 
 	int		rx_irq;
 	int		tx_irq;
 	int		link_irq;
+	int		tso_irq;
+	unsigned int	tx_irq_enabled;
+	unsigned int	tso_irq_enabled;
 	struct clk	*emac_clk;
 	struct clk	*ephy_clk;
 
@@ -172,6 +206,10 @@ struct nuport_mac_priv {
 	int			old_duplex;
 	u32			msg_level;
 	unsigned int		buffer_shifting_len;
+
+	/* tso enabled or not */
+	unsigned int		tso;
+	struct nuport_mac_tso_infos tso_infos;
 };
 
 static inline int nuport_mac_mii_busy_wait(struct nuport_mac_priv *priv)
@@ -236,8 +274,7 @@ static int nuport_mac_mii_reset(struct mii_bus *bus)
 	return 0;
 }
 
-static int nuport_mac_start_tx_dma(struct nuport_mac_priv *priv,
-					struct sk_buff *skb)
+static int nuport_mac_wait_for_tx_dma(struct nuport_mac_priv *priv)
 {
 	u32 reg;
 	unsigned int timeout = 2048;
@@ -254,10 +291,53 @@ static int nuport_mac_start_tx_dma(struct nuport_mac_priv *priv,
 	if (!timeout)
 		return -EBUSY;
 
+	return 0;
+}
+
+/* Disables the TSO interrupt and enables the MAC TX interrupt */
+static inline void nuport_mac_disable_tso_enable_tx(struct nuport_mac_priv *priv)
+{
+	if (priv->tso_irq_enabled) {
+		disable_irq(priv->tso_irq);
+		priv->tso_irq_enabled = false;
+	}
+
+	if (!priv->tx_irq_enabled) {
+		priv->tx_irq_enabled = true;
+		enable_irq(priv->tx_irq);
+	}
+}
+
+/* Enables the TSO interrupt and disables the MAC TX interrupt */
+static inline void nuport_mac_enable_tso_disable_tx(struct nuport_mac_priv *priv)
+{
+	if (priv->tx_irq_enabled) {
+		disable_irq(priv->tx_irq);
+		priv->tx_irq_enabled = false;
+	}
+
+	if (!priv->tso_irq_enabled) {
+		priv->tso_irq_enabled = true;
+		enable_irq(priv->tso_irq);
+	}
+}
+
+static int __nuport_mac_start_tx_dma(struct nuport_mac_priv *priv,
+					struct sk_buff *skb)
+{
+	int ret;
+	u32 reg;
+
+	ret = nuport_mac_wait_for_tx_dma(priv);
+	if (ret)
+		return ret;
+
 	priv->tx_addr = dma_map_single(&priv->pdev->dev, skb->data,
 			skb->len, DMA_TO_DEVICE);
 	if (dma_mapping_error(&priv->pdev->dev, priv->tx_addr))
 		return -ENOMEM;
+
+	nuport_mac_disable_tso_enable_tx(priv);
 
 	/* enable enhanced mode */
 	nuport_mac_writel(TX_DMA_ENH_ENABLE, TX_DMA_ENH);
@@ -268,6 +348,183 @@ static int nuport_mac_start_tx_dma(struct nuport_mac_priv *priv,
 	nuport_mac_writel(reg, TX_START_DMA);
 
 	return 0;
+}
+
+static int __nuport_mac_start_tso_dma(struct nuport_mac_priv *priv,
+					struct sk_buff *skb)
+{
+	dma_addr_t p;
+	int ret;
+
+	ret = nuport_mac_wait_for_tx_dma(priv);
+	if (ret)
+		return ret;
+
+	p = dma_map_single(&priv->pdev->dev, skb->data,
+			skb->len, DMA_TO_DEVICE);
+
+	nuport_mac_enable_tso_disable_tx(priv);
+
+	nuport_mac_writel(p, TSO_DATA_START_ADDR);
+	nuport_mac_writel(priv->tso_infos.total_data_size, TSO_TOTAL_DATA_SIZE);
+	nuport_mac_writel(priv->tso_infos.segment_size, TSO_PAYLOAD_SIZE);
+	nuport_mac_writel(priv->tso_infos.total_header_len, TSO_HEADER_LEN);
+	nuport_mac_writel(priv->tso_infos.ip_hdr_len, TSO_IP_HEADER_LEN);
+	nuport_mac_writel(priv->tso_infos.tcp_udp_hdr_len, TSO_TCP_HEADER_LEN);
+	wmb();
+	nuport_mac_writel(priv->tso_infos.cmd, TSO_CTRL_REG);
+
+	return 0;
+}
+
+static void nuport_mac_tso_infos_dump(struct nuport_mac_tso_infos *infos)
+{
+	pr_info("Total data size: %d\n", infos->total_data_size);
+	pr_info("Segment size: %d\n", infos->segment_size);
+	pr_info("IP hdr len: %d\n", infos->ip_hdr_len);
+	pr_info("TCP/UDP hdr len: %d\n", infos->tcp_udp_hdr_len);
+	pr_info("Command: %x\n", infos->cmd);
+}
+
+/*
+ * Determine whether this skb is for the TSO engine or DMA engine
+ */
+static int __nuport_mac_skb_is_for_tso(struct nuport_mac_priv *priv,
+					struct sk_buff *skb)
+{
+	struct iphdr *iph;
+	struct tcphdr *th;
+	struct udphdr *uh;
+	unsigned int payload_offset;
+
+	if (skb->protocol != __constant_htons(ETH_P_IP))
+		return 0;
+
+	iph = ip_hdr(skb);
+
+	/* IP header length */
+	priv->tso_infos.ip_hdr_len = iph->ihl;
+	/* Total (Eth + IP + TCP/UDP) */
+	priv->tso_infos.total_data_size = skb->len;
+
+	/* Common command */
+	priv->tso_infos.cmd = TSO_CTRL_EN | TSO_CTRL_RUN | TSO_CTRL_IP_CHECK;
+
+	switch (htons(iph->protocol)) {
+	case IPPROTO_TCP:
+		th = tcp_hdr(skb);
+		/* too small, give it to dma */
+		payload_offset = ETH_HLEN + (iph->ihl * 4) + tcp_hdrlen(skb);
+		if ((skb->len - payload_offset) < TSO_PAYLOAD_THRESH)
+			return 0;
+
+		/* TCP header length */
+		priv->tso_infos.tcp_udp_hdr_len = th->doff;
+		priv->tso_infos.total_header_len = payload_offset;
+		if (skb_shinfo(skb)->gso_size)
+			priv->tso_infos.segment_size = skb_shinfo(skb)->gso_size;
+		else
+			priv->tso_infos.segment_size = skb->len - priv->tso_infos.total_header_len;
+
+		priv->tso_infos.cmd |= TSO_CTRL_TCP_CHECK;
+		break;
+
+	case IPPROTO_UDP:
+		uh = udp_hdr(skb);
+
+		priv->tso_infos.tcp_udp_hdr_len = sizeof(uh->len);
+		priv->tso_infos.total_header_len = ETH_HLEN + (iph->ihl * 4) +
+							priv->tso_infos.tcp_udp_hdr_len * 4;
+		priv->tso_infos.segment_size = skb->len - priv->tso_infos.total_header_len;
+		priv->tso_infos.cmd |= TSO_CTRL_UDP_CHECK;
+		break;
+
+	default:
+		return 0;
+	}
+
+	return 1;
+}
+
+static inline int nuport_mac_start_tx(struct nuport_mac_priv *priv,
+					struct sk_buff *skb)
+{
+	bool ret;
+
+	ret = __nuport_mac_skb_is_for_tso(priv, skb);
+	if (ret)
+		return __nuport_mac_start_tso_dma(priv, skb);
+	else
+		return __nuport_mac_start_tx_dma(priv, skb);
+}
+
+static void nuport_mac_tso_process_tcp(struct sk_buff *skb)
+{
+	struct iphdr *iph = ip_hdr(skb);
+	struct tcphdr *th = tcp_hdr(skb);
+	unsigned int payload_len, offset, tcp_len;
+
+	offset = (ETH_HLEN + (iph->ihl * 4) + tcp_hdrlen(skb));
+	payload_len = skb->len - offset;
+	if (payload_len > TSO_PAYLOAD_THRESH) {
+		iph->check = 0;
+		th->check = 0;
+	} else {
+#if 0
+		skb->csum = csum_partial(skb->data + offset, payload_len, 0);
+		th->check = 0;
+		tcp_len = tcp_hdrlen(skb) + payload_len;
+		th->check = tcp_v4_check(tcp_len, iph->saddr, iph->daddr,
+					csum_partial((char *)th, tcp_hdrlen(skb), skb->csum));
+#endif
+		th->check =  ~csum_tcpudp_magic(iph->saddr,
+						iph->daddr, 0,
+						IPPROTO_TCP, 0);
+	}
+}
+
+static void nuport_mac_tso_process_udp(struct sk_buff *skb)
+{
+	struct iphdr *iph = ip_hdr(skb);
+	struct udphdr *uh = udp_hdr(skb);
+
+	if (iph->frag_off & htons(IP_MF | IP_OFFSET))
+		return;
+
+	if (!uh) {
+		skb->data[0x40] = 0;
+		skb->data[0x41] = 0;
+	} else
+		uh->check = 0;
+
+	iph->check = 0;
+}
+
+static int nuport_mac_tso_process_skb(struct nuport_mac_priv *priv,
+					struct sk_buff *skb)
+{
+	int ret = 0;
+	__be16 protocol = htons(skb->protocol);
+
+	/* nothing to do about non-IP frames */
+	if (protocol != ETH_P_IP)
+		return 0;
+
+	switch (protocol) {
+	case IPPROTO_TCP:
+		nuport_mac_tso_process_tcp(skb);
+		break;
+	case IPPROTO_UDP:
+		nuport_mac_tso_process_udp(skb);
+		break;
+	default:
+		return 0;
+	}
+
+	if (skb_is_nonlinear(skb))
+		ret = skb_linearize(skb);
+
+	return ret;
 }
 
 static void nuport_mac_reset_tx_dma(struct nuport_mac_priv *priv)
@@ -349,9 +606,20 @@ static int nuport_mac_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		netif_start_queue(dev);
 	}
 
+	if (!priv->tso)
+		goto dma;
+
+	ret = nuport_mac_tso_process_skb(priv, skb);
+	if (ret) {
+		netdev_err(dev, "tso_process_skb returns: %d\n", ret);
+		dev_kfree_skb(skb);
+		dev->stats.tx_errors++;
+		return NETDEV_TX_BUSY;
+	}
+dma:
 	spin_lock_irqsave(&priv->lock, flags);
 	if (priv->first_pkt) {
-		ret = nuport_mac_start_tx_dma(priv, skb);
+		ret = nuport_mac_start_tx(priv, skb);
 		if (ret) {
 			netif_stop_queue(dev);
 			spin_unlock_irqrestore(&priv->lock, flags);
@@ -457,6 +725,10 @@ static irqreturn_t nuport_mac_tx_interrupt(int irq, void *dev_id)
 	u32 reg;
 
 	spin_lock_irqsave(&priv->lock, flags);
+
+	if (irq == priv->tso_irq)
+		goto dequeue;
+
 	/* clear status word available if ready */
 	reg = nuport_mac_readl(TX_START_DMA);
 	if (reg & TX_DMA_STATUS_AVAIL) {
@@ -468,6 +740,7 @@ static irqreturn_t nuport_mac_tx_interrupt(int irq, void *dev_id)
 	} else
 		netdev_dbg(dev, "no status word: %08x\n", reg);
 
+dequeue:
 	skb = priv->tx_skb[priv->dma_tx];
 	priv->tx_skb[priv->dma_tx] = NULL;
 	priv->valid_txskb[priv->dma_tx] = 0;
@@ -482,7 +755,7 @@ static irqreturn_t nuport_mac_tx_interrupt(int irq, void *dev_id)
 	if (!priv->valid_txskb[priv->dma_tx])
 		priv->first_pkt = 1;
 	else {
-		ret = nuport_mac_start_tx_dma(priv, priv->tx_skb[priv->dma_tx]);
+		ret = nuport_mac_start_tx(priv, priv->tx_skb[priv->dma_tx]);
 		if (ret)
 			netdev_err(dev, "failed to restart TX dma\n");
 	}
@@ -601,6 +874,7 @@ static int nuport_mac_rx(struct net_device *dev, int limit)
 		if (status & (1 << 28))
 			skb->pkt_type = PACKET_BROADCAST;
 
+		/* hardware filter already validates all incoming checksums */
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 
 		/* Pass the received packet to network layer */
@@ -773,6 +1047,7 @@ static int nuport_mac_open(struct net_device *dev)
 		netdev_err(dev, "unable to request rx interrupt\n");
 		goto out_link_irq;
 	}
+	priv->tx_irq_enabled = 1;
 
 	/* Enable link interrupt monitoring for our PHY address */
 	reg = LINK_INT_EN | (priv->phydev->addr << LINK_PHY_ADDR_SHIFT);
@@ -787,12 +1062,23 @@ static int nuport_mac_open(struct net_device *dev)
 	spin_unlock_irqrestore(&priv->lock, flags);
 
 	phy_start(priv->phydev);
+	priv->tx_irq_enabled = 1;
+
+	if (priv->tso) {
+		ret = request_irq(priv->tso_irq, &nuport_mac_tx_interrupt,
+					0, dev->name, dev);
+		if (ret) {
+			netdev_err(dev, "unable to request tso interrupt\n");
+			goto out_tx_irq;
+		}
+		priv->tso_irq_enabled = 1;
+	}
 
 	ret = request_irq(priv->rx_irq, &nuport_mac_rx_interrupt,
 				0, dev->name, dev);
 	if (ret) {
 		netdev_err(dev, "unable to request tx interrupt\n");
-		goto out_tx_irq;
+		goto out_tso_irq;
 	}
 
 	netif_start_queue(dev);
@@ -820,6 +1106,9 @@ static int nuport_mac_open(struct net_device *dev)
 out_rx_skb:
 	nuport_mac_free_rx_ring(priv);
 	free_irq(priv->rx_irq, dev);
+out_tso_irq:
+	if (priv->tso)
+		free_irq(priv->tso_irq, dev);
 out_tx_irq:
 	free_irq(priv->tx_irq, dev);
 out_link_irq:
@@ -849,6 +1138,8 @@ static int nuport_mac_close(struct net_device *dev)
 	phy_stop(priv->phydev);
 
 	free_irq(priv->tx_irq, dev);
+	if (priv->tso)
+		free_irq(priv->tso_irq, dev);
 	free_irq(priv->rx_irq, dev);
 	spin_unlock_irq(&priv->lock);
 
@@ -877,6 +1168,21 @@ static void nuport_mac_tx_timeout(struct net_device *dev)
 	nuport_mac_reset_tx_dma(priv);
 
 	netif_wake_queue(dev);
+}
+
+static int nuport_mac_change_mtu(struct net_device *dev, int new_mtu)
+{
+	struct nuport_mac_priv *priv = netdev_priv(dev);
+
+	if (!priv->tso)
+		return eth_change_mtu(dev, new_mtu);
+
+	if (new_mtu < 60 || new_mtu > 65535)
+		return -EINVAL;
+
+	dev->mtu = new_mtu;
+
+	return 0;
 }
 
 static int nuport_mac_mii_probe(struct net_device *dev)
@@ -920,7 +1226,7 @@ static int nuport_mac_mii_probe(struct net_device *dev)
 	return 0;
 
 out:
-	/* disable the Ethernet PHY clock for the moment */
+	/* disable the Ethernet PHY clock in case of error */
 	clk_disable(priv->ephy_clk);
 
 	return ret;
@@ -988,7 +1294,7 @@ static const struct net_device_ops nuport_mac_ops = {
 	.ndo_open		= nuport_mac_open,
 	.ndo_stop		= nuport_mac_close,
 	.ndo_start_xmit		= nuport_mac_start_xmit,
-	.ndo_change_mtu		= eth_change_mtu,
+	.ndo_change_mtu		= nuport_mac_change_mtu,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_set_mac_address	= nuport_mac_change_mac_address,
 	.ndo_tx_timeout		= nuport_mac_tx_timeout,
@@ -998,9 +1304,9 @@ static int __init nuport_mac_probe(struct platform_device *pdev)
 {
 	struct net_device *dev;
 	struct nuport_mac_priv *priv = NULL;
-	struct resource *regs, *dma;
+	struct resource *regs, *dma, *tso;
 	int ret = 0;
-	int rx_irq, tx_irq, link_irq;
+	int rx_irq, tx_irq, link_irq, tso_irq;
 	int i;
 	const unsigned int *intspec;
 
@@ -1012,6 +1318,7 @@ static int __init nuport_mac_probe(struct platform_device *pdev)
 
 	regs = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	dma = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+	tso = platform_get_resource(pdev, IORESOURCE_MEM, 2);
 	if (!regs || !dma) {
 		dev_err(&pdev->dev, "failed to get regs resources\n");
 		ret = -ENODEV;
@@ -1021,6 +1328,7 @@ static int __init nuport_mac_probe(struct platform_device *pdev)
 	rx_irq = platform_get_irq(pdev, 0);
 	tx_irq = platform_get_irq(pdev, 1);
 	link_irq = platform_get_irq(pdev, 2);
+	tso_irq = platform_get_irq(pdev, 3);
 	if (rx_irq < 0 || tx_irq < 0 || link_irq < 0) {
 		ret = -ENODEV;
 		goto out;
@@ -1034,17 +1342,33 @@ static int __init nuport_mac_probe(struct platform_device *pdev)
 	spin_lock_init(&priv->lock);
 
 	intspec = of_get_property(pdev->dev.of_node,
-				"nuport-mac,buffer-shifting", NULL);
-	if (!intspec)
-		priv->buffer_shifting_len = 0;
-	else
+			"nuport-mac,buffer-shifting", NULL);
+	if (intspec)
 		priv->buffer_shifting_len = 2;
+
+	intspec = of_get_property(pdev->dev.of_node, "nuport-mac,tso", NULL);
+	if (intspec)
+		priv->tso = 1;
+
+	dev_info(&pdev->dev, "TSO: %sabled\n", priv->tso ? "en" : "dis");
+
+	if (!devm_request_mem_region(&pdev->dev,
+				regs->start, resource_size(regs), pdev->name)) {
+		ret = -ENXIO;
+		goto out_platform;
+	}
 
 	priv->mac_base = devm_ioremap(&pdev->dev,
 				regs->start, resource_size(regs));
 	if (!priv->mac_base) {
 		dev_err(&pdev->dev, "failed to remap regs\n");
 		ret = -ENOMEM;
+		goto out_platform;
+	}
+
+	if (!devm_request_mem_region(&pdev->dev,
+				dma->start, resource_size(dma), pdev->name)) {
+		ret = -ENXIO;
 		goto out_platform;
 	}
 
@@ -1056,6 +1380,29 @@ static int __init nuport_mac_probe(struct platform_device *pdev)
 		goto out_platform;
 	}
 
+	if (!priv->tso)
+		goto emac_clk;
+
+	if (tso_irq < 0) {
+		ret = -ENODEV;
+		goto out_platform;
+	}
+
+	if (!devm_request_mem_region(&pdev->dev,
+			tso->start, resource_size(tso), pdev->name)) {
+		ret = -ENXIO;
+		goto out_platform;
+	}
+
+	priv->tso_base = devm_ioremap(&pdev->dev,
+			tso->start, resource_size(tso));
+	if (!priv->tso_base) {
+		dev_err(&pdev->dev, "failed to remap tso-regs\n");
+		ret = -ENOMEM;
+		goto out_platform;
+	}
+
+emac_clk:
 	priv->emac_clk = clk_get(&pdev->dev, "emac");
 	if (IS_ERR_OR_NULL(priv->emac_clk)) {
 		dev_err(&pdev->dev, "failed to get emac clk\n");
@@ -1073,12 +1420,16 @@ static int __init nuport_mac_probe(struct platform_device *pdev)
 	priv->link_irq = link_irq;
 	priv->rx_irq = rx_irq;
 	priv->tx_irq = tx_irq;
+	priv->tso_irq = tso_irq;
 	priv->msg_level = NETIF_MSG_DRV | NETIF_MSG_PROBE | NETIF_MSG_LINK;
 	dev->netdev_ops = &nuport_mac_ops;
 	dev->ethtool_ops = &nuport_mac_ethtool_ops;
 	dev->watchdog_timeo = HZ;
 	dev->flags = IFF_BROADCAST;	/* Supports Broadcast */
-	dev->tx_queue_len = TX_RING_SIZE / 2;
+	if (priv->tso) {
+		dev->features |= NETIF_F_IP_CSUM | NETIF_F_TSO;
+		dev->hw_features |= NETIF_F_IP_CSUM | NETIF_F_TSO;
+	}
 
 	netif_napi_add(dev, &priv->napi, nuport_mac_poll, 64);
 
