@@ -150,6 +150,10 @@ tl-wr2543n)
 	ucidef_set_led_usbdev "usb" "USB" "tp-link:green:usb" "1-1"
 	;;
 
+wap4410n)
+	set_led_wlan "wlan" "WLAN" "wap4410n:green:wlan" "phy0tpt"
+	;;
+
 wrt160nl)
 	ucidef_set_led_wlan "wlan" "WLAN" "wrt160nl:blue:wlan" "phy0tpt"
 	;;

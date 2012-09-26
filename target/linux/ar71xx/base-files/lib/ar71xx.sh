@@ -390,6 +390,9 @@ ar71xx_board_detect() {
 	*WNR2000)
 		name="wnr2000"
 		;;
+	*WAP4410N)
+		name="wap4410n"
+		;;
 	*WRT160NL)
 		name="wrt160nl"
 		;;

@@ -192,6 +192,13 @@ define Image/BuildKernel
 	$(call Image/Build/Initramfs)
 endef
 
+define Image/Build/WAP4410N
+	$(call MkuImageGzip,$(2),$(3))
+	if [ -e "$(call sysupname,$(1),$(2))" ]; then \
+		wap4410n -u auto -v 1007 -k $(KDIR_TMP)/vmlinux-$(2).uImage -r $(KDIR)/root.$(1) -o $(call factoryname,$(1),$(2)); \
+	fi
+endef
+
 define Image/Build/WRT400N
 	$(call MkuImageLzma,$(2),$(3))
 	$(call Sysupgrade/KRuImage,$(1),$(2),1310720,6488064)
@@ -843,6 +850,7 @@ $(eval $(call SingleProfile,WHRHPG300N,$(fs_64k),WHRHPG300N,whr-hp-g300n,WHR-HP-
 $(eval $(call SingleProfile,WHRHPG300N,$(fs_64k),WHRHPGN,whr-hp-gn,WHR-HP-GN,ttyS0,115200,$$(whrhpg300n_mtdlayout),WHR-HP-GN))
 $(eval $(call SingleProfile,WHRHPG300N,$(fs_64k),WLAEAG300N,wlae-ag300n,WLAE-AG300N,ttyS0,115200,$$(whrhpg300n_mtdlayout),WLAE-AG300N))
 
+$(eval $(call SingleProfile,WAP4410N,$(fs_64k),WAP4410N,wap4410n,WAP4410N,ttyS0,115200))
 $(eval $(call SingleProfile,WRT400N,$(fs_64k),WRT400N,wrt400n,WRT400N,ttyS0,115200))
 
 $(eval $(call SingleProfile,WZRHPG30XNH,$(fs_128k),WZRHPG300NH,wzr-hp-g300nh,WZR-HP-G300NH,ttyS0,115200,WZR-HP-G300NH))
