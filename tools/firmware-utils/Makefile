@@ -60,6 +60,7 @@ define Host/Compile
 	$(call cc,mkbrnimg)
 	$(call cc,mkdapimg)
 	$(call cc, mkcameofw, -Wall)
+	$(call cc,wap4410n,-lcrypto)
 endef
 
 define Host/Install
