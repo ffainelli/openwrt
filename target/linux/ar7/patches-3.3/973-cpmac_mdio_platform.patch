@@ -1,0 +1,184 @@
+--- a/arch/mips/ar7/platform.c
++++ b/arch/mips/ar7/platform.c
+@@ -284,6 +284,31 @@ static struct platform_device cpmac_high
+ 	.num_resources	= ARRAY_SIZE(cpmac_high_res),
+ };
+ 
++static struct plat_cpmac_data cpmac_mii_data = {
++	.phy_mask	= 0x80000000,
++	.reset_bit	= AR7_RESET_BIT_EPHY,
++	.power_bit	= 27,
++};
++
++static struct resource cpmac_mii_res[] = {
++	{
++		.name	= "regs",
++		.start	= AR7_REGS_MDIO,
++		.end	= AR7_REGS_MDIO + 256,
++		.flags	= IORESOURCE_MEM,
++	},
++};
++
++static struct platform_device cpmac_mii_device = {
++	.id		= -1,
++	.name		= "cpmac-mii",
++	.dev = {
++		.platform_data		= &cpmac_mii_data,
++	},
++	.resource	= cpmac_mii_res,
++	.num_resources	= ARRAY_SIZE(cpmac_mii_res),
++};
++
+ static void __init cpmac_get_mac(int instance, unsigned char *dev_addr)
+ {
+ 	char name[5], *mac;
+@@ -656,6 +681,13 @@ static void __init titan_fixup_devices(v
+ 	vlynq_high_res[3].start = 112;
+ 	vlynq_high_res[3].end = 143;
+ 
++	/* Set cpmac-mii data */
++	cpmac_mii_data.phy_mask = (0x80000000 | 0x40000000);
++
++	/* Set cpmac-mii resources */
++	cpmac_mii_res[0].start = TITAN_REGS_MDIO;
++	cpmac_mii_res[0].end = TITAN_REGS_MDIO + 256;
++
+ 	/* Set cpmac0 data */
+ 	cpmac_low_data.phy_mask = 0x40000000;
+ 
+@@ -700,6 +732,10 @@ static int __init ar7_register_devices(v
+ 			pr_warning("unable to register vlynq-high: %d\n", res);
+ 	}
+ 
++	res = platform_device_register(&cpmac_mii_device);
++	if (res)
++		pr_warning("unable to register cpmac-mii: %d\n", res);
++
+ 	if (ar7_has_high_cpmac()) {
+ 		cpmac_get_mac(0, cpmac_high_data.dev_addr);
+ 
+--- a/drivers/net/ethernet/ti/cpmac.c
++++ b/drivers/net/ethernet/ti/cpmac.c
+@@ -1213,11 +1213,21 @@ static struct platform_driver cpmac_driv
+ 	.remove = __devexit_p(cpmac_remove),
+ };
+ 
+-int __devinit cpmac_init(void)
++static int __devinit cpmac_mii_probe(struct platform_device *pdev)
+ {
+ 	u32 mask;
+ 	int i, res;
+ 	void __iomem *mii_reg;
++	struct resource *r;
++	struct plat_cpmac_data *pdata;
++
++	pdata = pdev->dev.platform_data;
++	if (!pdata)
++		return -ENODEV;
++
++	r = platform_get_resource_byname(pdev, IORESOURCE_MEM, "regs");
++	if (!r)
++		return -ENODEV;
+ 
+ 	cpmac_mii = mdiobus_alloc();
+ 	if (cpmac_mii == NULL)
+@@ -1229,19 +1239,17 @@ int __devinit cpmac_init(void)
+ 	cpmac_mii->reset = cpmac_mdio_reset;
+ 	cpmac_mii->irq = mii_irqs;
+ 
+-	cpmac_mii->priv = ioremap(ar7_is_titan() ? TITAN_REGS_MDIO : AR7_REGS_MDIO, 256);
+-
++	cpmac_mii->priv = ioremap(r->start, resource_size(r));
+ 	if (!cpmac_mii->priv) {
+ 		printk(KERN_ERR "Can't ioremap mdio registers\n");
+ 		res = -ENXIO;
+ 		goto fail_alloc;
+ 	}
+ 
+-#warning FIXME: unhardcode gpio&reset bits
+-	gpio_request(26, "cpmac-mii");
+-	gpio_request(27, "cpmac-mii");
+-	gpio_free(26);
+-	gpio_free(27);
++	gpio_request(pdata->reset_bit, pdev->name);
++	gpio_request(pdata->power_bit, pdev->name);
++	gpio_free(pdata->reset_bit);
++	gpio_free(pdata->power_bit);
+ 
+ 	if (ar7_is_titan()) {
+ 		ar7_device_reset(AR7_RESET_BIT_EPHY);
+@@ -1256,7 +1264,7 @@ int __devinit cpmac_init(void)
+ 
+ 	for (i = 0; i < 300; i++) {
+ 		mask = cpmac_read(cpmac_mii->priv, CPMAC_MDIO_ALIVE);
+-		mask &= ar7_is_titan()? ~(0x80000000 | 0x40000000) : ~(0x80000000);
++		mask &= ~pdata->phy_mask;
+ 		if (mask)
+ 			break;
+ 		else
+@@ -1289,10 +1297,7 @@ int __devinit cpmac_init(void)
+ 	else
+ 		printk(KERN_INFO "INTERNAL PHY!!!\n");
+ 
+-	if (ar7_is_titan())
+-		cpmac_mii->phy_mask = ~(mask | 0x80000000 | 0x40000000);
+-	else
+-		cpmac_mii->phy_mask = ~(mask | 0x80000000);
++	cpmac_mii->phy_mask = ~(mask | pdata->phy_mask);
+ 
+ 	snprintf(cpmac_mii->id, MII_BUS_ID_SIZE, "cpmac-1");
+ 
+@@ -1300,6 +1305,8 @@ int __devinit cpmac_init(void)
+ 	if (res)
+ 		goto fail_mii;
+ 
++	platform_set_drvdata(pdev, cpmac_mii);
++
+ 	res = platform_driver_register(&cpmac_driver);
+ 	if (res)
+ 		goto fail_cpmac;
+@@ -1307,6 +1314,7 @@ int __devinit cpmac_init(void)
+ 	return 0;
+ 
+ fail_cpmac:
++	platform_set_drvdata(pdev, NULL);
+ 	mdiobus_unregister(cpmac_mii);
+ 
+ fail_mii:
+@@ -1318,12 +1326,34 @@ fail_alloc:
+ 	return res;
+ }
+ 
+-void __devexit cpmac_exit(void)
++static int __devexit cpmac_mii_remove(struct platform_device *pdev)
+ {
+-	platform_driver_unregister(&cpmac_driver);
++	platform_set_drvdata(pdev, NULL);
+ 	mdiobus_unregister(cpmac_mii);
+ 	iounmap(cpmac_mii->priv);
+ 	mdiobus_free(cpmac_mii);
++
++	return 0;
++}
++
++static struct platform_driver cpmac_mii_driver = {
++	.driver = {
++		.name	= "cpmac-mii",
++		.owner	= THIS_MODULE,
++	},
++	.probe	= cpmac_mii_probe,
++	.remove	= __devexit_p(cpmac_mii_remove),
++};
++
++int __devinit cpmac_init(void)
++{
++	return platform_driver_register(&cpmac_mii_driver);
++}
++
++void __devexit cpmac_exit(void)
++{
++	platform_driver_unregister(&cpmac_driver);
++	platform_driver_unregister(&cpmac_mii_driver);
+ }
+ 
+ module_init(cpmac_init);
