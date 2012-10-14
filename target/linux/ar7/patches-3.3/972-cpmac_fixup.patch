@@ -1,6 +1,6 @@
 --- a/arch/mips/ar7/platform.c
 +++ b/arch/mips/ar7/platform.c
-@@ -712,26 +712,23 @@ static int __init ar7_register_devices(v
+@@ -701,26 +701,23 @@ static int __init ar7_register_devices(v
  	}
  
  	if (ar7_has_high_cpmac()) {
@@ -40,7 +40,7 @@
  
  	detect_leds();
  	res = platform_device_register(&ar7_gpio_leds);
-@@ -744,8 +741,10 @@ static int __init ar7_register_devices(v
+@@ -733,8 +730,10 @@ static int __init ar7_register_devices(v
  
  	/* Register watchdog only if enabled in hardware */
  	bootcr = ioremap_nocache(AR7_REGS_DCL, 4);
@@ -173,9 +173,9 @@
  
  	cpmac_mii = mdiobus_alloc();
  	if (cpmac_mii == NULL)
-@@ -1251,31 +1241,51 @@ int __devinit cpmac_init(void)
- 	ar7_gpio_disable(26);
- 	ar7_gpio_disable(27);
+@@ -1253,32 +1243,52 @@ int __devinit cpmac_init(void)
+ 	gpio_free(26);
+ 	gpio_free(27);
  
 -	if (!ar7_is_titan()) {
 +	if (ar7_is_titan()) {
@@ -186,11 +186,12 @@
  		ar7_device_reset(AR7_RESET_BIT_CPMAC_LO);
  		ar7_device_reset(AR7_RESET_BIT_CPMAC_HI);
  	}
+ 
 -	ar7_device_reset(AR7_RESET_BIT_EPHY);
 -
 -	if (ar7_is_titan())
 -		ar7_device_reset(TITAN_RESET_BIT_EPHY1);
- 
+-
  	cpmac_mii->reset(cpmac_mii);
  
  	for (i = 0; i < 300; i++) {
@@ -205,7 +206,7 @@
 -	mask &= 0x7fffffff;
  	if (mask & (mask - 1)) {
  		external_switch = 1;
--		mask = 0;
+ 		mask = 0;
 +		if (!ar7_has_high_cpmac()) {
 +			if (ar7_is_titan()) {
 +				ar7_device_disable(AR7_RESET_BIT_EPHY);

@@ -1,0 +1,222 @@
+--- a/arch/mips/ar7/gpio.c
++++ b/arch/mips/ar7/gpio.c
+@@ -1,7 +1,7 @@
+ /*
+  * Copyright (C) 2007 Felix Fietkau <nbd@openwrt.org>
+  * Copyright (C) 2007 Eugene Konev <ejka@openwrt.org>
+- * Copyright (C) 2009-2010 Florian Fainelli <florian@openwrt.org>
++ * Copyright (C) 2009-2012 Florian Fainelli <florian@openwrt.org>
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -133,43 +133,23 @@ static int titan_gpio_direction_output(s
+ 	return 0;
+ }
+ 
+-static struct ar7_gpio_chip ar7_gpio_chip = {
+-	.chip = {
+-		.label			= "ar7-gpio",
+-		.direction_input	= ar7_gpio_direction_input,
+-		.direction_output	= ar7_gpio_direction_output,
+-		.set			= ar7_gpio_set_value,
+-		.get			= ar7_gpio_get_value,
+-		.base			= 0,
+-		.ngpio			= AR7_GPIO_MAX,
+-	}
+-};
+-
+-static struct ar7_gpio_chip titan_gpio_chip = {
+-	.chip = {
+-		.label			= "titan-gpio",
+-		.direction_input	= titan_gpio_direction_input,
+-		.direction_output	= titan_gpio_direction_output,
+-		.set			= titan_gpio_set_value,
+-		.get			= titan_gpio_get_value,
+-		.base			= 0,
+-		.ngpio			= TITAN_GPIO_MAX,
+-	}
+-};
+-
+-static inline int ar7_gpio_enable_ar7(unsigned gpio)
++static int ar7_gpio_request(struct gpio_chip *chip, unsigned gpio)
+ {
+-	void __iomem *gpio_en = ar7_gpio_chip.regs + AR7_GPIO_ENABLE;
++	struct ar7_gpio_chip *gpch =
++				container_of(chip, struct ar7_gpio_chip, chip);
++	void __iomem *gpio_en = gpch->regs + AR7_GPIO_ENABLE;
+ 
+ 	writel(readl(gpio_en) | (1 << gpio), gpio_en);
+ 
+ 	return 0;
+ }
+ 
+-static inline int ar7_gpio_enable_titan(unsigned gpio)
++static int titan_gpio_request(struct gpio_chip *chip, unsigned gpio)
+ {
+-	void __iomem *gpio_en0 = titan_gpio_chip.regs  + TITAN_GPIO_ENBL_0;
+-	void __iomem *gpio_en1 = titan_gpio_chip.regs  + TITAN_GPIO_ENBL_1;
++	struct ar7_gpio_chip *gpch =
++				container_of(chip, struct ar7_gpio_chip, chip);
++	void __iomem *gpio_en0 = gpch->regs  + TITAN_GPIO_ENBL_0;
++	void __iomem *gpio_en1 = gpch->regs  + TITAN_GPIO_ENBL_1;
+ 
+ 	writel(readl(gpio >> 5 ? gpio_en1 : gpio_en0) | (1 << (gpio & 0x1f)),
+ 		gpio >> 5 ? gpio_en1 : gpio_en0);
+@@ -177,39 +157,53 @@ static inline int ar7_gpio_enable_titan(
+ 	return 0;
+ }
+ 
+-int ar7_gpio_enable(unsigned gpio)
++static void ar7_gpio_free(struct gpio_chip *chip, unsigned gpio)
+ {
+-	return ar7_is_titan() ? ar7_gpio_enable_titan(gpio) :
+-				ar7_gpio_enable_ar7(gpio);
+-}
+-EXPORT_SYMBOL(ar7_gpio_enable);
+-
+-static inline int ar7_gpio_disable_ar7(unsigned gpio)
+-{
+-	void __iomem *gpio_en = ar7_gpio_chip.regs + AR7_GPIO_ENABLE;
++	struct ar7_gpio_chip *gpch =
++				container_of(chip, struct ar7_gpio_chip, chip);
++	void __iomem *gpio_en = gpch->regs + AR7_GPIO_ENABLE;
+ 
+ 	writel(readl(gpio_en) & ~(1 << gpio), gpio_en);
+-
+-	return 0;
+ }
+ 
+-static inline int ar7_gpio_disable_titan(unsigned gpio)
++static void titan_gpio_free(struct gpio_chip *chip, unsigned gpio)
+ {
+-	void __iomem *gpio_en0 = titan_gpio_chip.regs + TITAN_GPIO_ENBL_0;
+-	void __iomem *gpio_en1 = titan_gpio_chip.regs + TITAN_GPIO_ENBL_1;
++	struct ar7_gpio_chip *gpch =
++				container_of(chip, struct ar7_gpio_chip, chip);
++	void __iomem *gpio_en0 = gpch->regs + TITAN_GPIO_ENBL_0;
++	void __iomem *gpio_en1 = gpch->regs + TITAN_GPIO_ENBL_1;
+ 
+ 	writel(readl(gpio >> 5 ? gpio_en1 : gpio_en0) & ~(1 << (gpio & 0x1f)),
+ 			gpio >> 5 ? gpio_en1 : gpio_en0);
+-
+-	return 0;
+ }
+ 
+-int ar7_gpio_disable(unsigned gpio)
+-{
+-	return ar7_is_titan() ? ar7_gpio_disable_titan(gpio) :
+-				ar7_gpio_disable_ar7(gpio);
+-}
+-EXPORT_SYMBOL(ar7_gpio_disable);
++static struct ar7_gpio_chip ar7_gpio_chip = {
++	.chip = {
++		.label			= "ar7-gpio",
++		.direction_input	= ar7_gpio_direction_input,
++		.direction_output	= ar7_gpio_direction_output,
++		.set			= ar7_gpio_set_value,
++		.get			= ar7_gpio_get_value,
++		.request		= ar7_gpio_request,
++		.free			= ar7_gpio_free,
++		.base			= 0,
++		.ngpio			= AR7_GPIO_MAX,
++	}
++};
++
++static struct ar7_gpio_chip titan_gpio_chip = {
++	.chip = {
++		.label			= "titan-gpio",
++		.direction_input	= titan_gpio_direction_input,
++		.direction_output	= titan_gpio_direction_output,
++		.set			= titan_gpio_set_value,
++		.get			= titan_gpio_get_value,
++		.request		= titan_gpio_request,
++		.free			= titan_gpio_free,
++		.base			= 0,
++		.ngpio			= TITAN_GPIO_MAX,
++	}
++};
+ 
+ struct titan_gpio_cfg {
+ 	u32 reg;
+@@ -306,7 +300,7 @@ static void titan_gpio_init(void)
+ 
+ 	for (i = 44; i < 48; i++) {
+ 		titan_gpio_pinsel(i);
+-		ar7_gpio_enable_titan(i);
++		gpio_request(i, "titan");
+ 		titan_gpio_direction_input(&titan_gpio_chip.chip, i);
+ 	}
+ }
+--- a/arch/mips/include/asm/mach-ar7/gpio.h
++++ b/arch/mips/include/asm/mach-ar7/gpio.h
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2007-2009 Florian Fainelli <florian@openwrt.org>
++ * Copyright (C) 2007-2012 Florian Fainelli <florian@openwrt.org>
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -32,10 +32,6 @@
+ 
+ #define gpio_cansleep __gpio_cansleep
+ 
+-/* Board specific GPIO functions */
+-int ar7_gpio_enable(unsigned gpio);
+-int ar7_gpio_disable(unsigned gpio);
+-
+ #include <asm-generic/gpio.h>
+ 
+ #endif
+--- a/arch/mips/ar7/platform.c
++++ b/arch/mips/ar7/platform.c
+@@ -62,17 +62,9 @@ static int vlynq_on(struct vlynq_device
+ 
+ 	ar7_device_reset(pdata->reset_bit);
+ 
+-	ret = ar7_gpio_disable(pdata->gpio_bit);
+-	if (ret)
+-		goto out_enabled;
+-
+-	ret = ar7_gpio_enable(pdata->gpio_bit);
+-	if (ret)
+-		goto out_enabled;
+-
+ 	ret = gpio_direction_output(pdata->gpio_bit, 0);
+ 	if (ret)
+-		goto out_gpio_enabled;
++		goto out_enabled;
+ 
+ 	msleep(50);
+ 
+@@ -82,8 +74,6 @@ static int vlynq_on(struct vlynq_device
+ 
+ 	return 0;
+ 
+-out_gpio_enabled:
+-	ar7_gpio_disable(pdata->gpio_bit);
+ out_enabled:
+ 	ar7_device_disable(pdata->reset_bit);
+ 	gpio_free(pdata->gpio_bit);
+@@ -95,7 +85,6 @@ static void vlynq_off(struct vlynq_devic
+ {
+ 	struct plat_vlynq_data *pdata = dev->dev.platform_data;
+ 
+-	ar7_gpio_disable(pdata->gpio_bit);
+ 	gpio_free(pdata->gpio_bit);
+ 	ar7_device_disable(pdata->reset_bit);
+ }
+--- a/drivers/net/ethernet/ti/cpmac.c
++++ b/drivers/net/ethernet/ti/cpmac.c
+@@ -1246,8 +1246,10 @@ int __devinit cpmac_init(void)
+ 	}
+ 
+ #warning FIXME: unhardcode gpio&reset bits
+-	ar7_gpio_disable(26);
+-	ar7_gpio_disable(27);
++	gpio_request(26, "cpmac-mii");
++	gpio_request(27, "cpmac-mii");
++	gpio_free(26);
++	gpio_free(27);
+ 	ar7_device_reset(AR7_RESET_BIT_CPMAC_LO);
+ 	ar7_device_reset(AR7_RESET_BIT_CPMAC_HI);
+ 	ar7_device_reset(AR7_RESET_BIT_EPHY);

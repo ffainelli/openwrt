@@ -18,10 +18,10 @@
  
  	if (!cpmac_mii->priv) {
  		printk(KERN_ERR "Can't ioremap mdio registers\n");
-@@ -1248,10 +1250,16 @@ int __devinit cpmac_init(void)
- #warning FIXME: unhardcode gpio&reset bits
- 	ar7_gpio_disable(26);
- 	ar7_gpio_disable(27);
+@@ -1250,10 +1252,17 @@ int __devinit cpmac_init(void)
+ 	gpio_request(27, "cpmac-mii");
+ 	gpio_free(26);
+ 	gpio_free(27);
 -	ar7_device_reset(AR7_RESET_BIT_CPMAC_LO);
 -	ar7_device_reset(AR7_RESET_BIT_CPMAC_HI);
 +
@@ -29,6 +29,7 @@
 +		ar7_device_reset(AR7_RESET_BIT_CPMAC_LO);
 +		ar7_device_reset(AR7_RESET_BIT_CPMAC_HI);
 +	}
++
  	ar7_device_reset(AR7_RESET_BIT_EPHY);
  
 +	if (ar7_is_titan())
@@ -37,7 +38,7 @@
  	cpmac_mii->reset(cpmac_mii);
  
  	for (i = 0; i < 300; i++) {
-@@ -1268,7 +1276,11 @@ int __devinit cpmac_init(void)
+@@ -1270,7 +1279,11 @@ int __devinit cpmac_init(void)
  		mask = 0;
  	}
  
