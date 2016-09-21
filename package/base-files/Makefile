@@ -140,12 +140,16 @@ define Package/base-files/install
 	mkdir -p $(1)/etc/rc.d
 	mkdir -p $(1)/overlay
 	mkdir -p $(1)/lib/firmware
+ifneq ($(CONFIG_EXTERNAL_TOOLCHAIN),y)
 	$(if $(LIB_SUFFIX),-$(LN) lib $(1)/lib$(LIB_SUFFIX))
+endif
 	mkdir -p $(1)/mnt
 	mkdir -p $(1)/proc
 	mkdir -p $(1)/tmp
 	mkdir -p $(1)/usr/lib
+ifneq ($(CONFIG_EXTERNAL_TOOLCHAIN),y)
 	$(if $(LIB_SUFFIX),-$(LN) lib $(1)/usr/lib$(LIB_SUFFIX))
+endif
 	mkdir -p $(1)/usr/bin
 	mkdir -p $(1)/sys
 	mkdir -p $(1)/www
