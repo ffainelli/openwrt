@@ -45,6 +45,7 @@ tools-$(BUILD_PPL_CLOOG) += ppl cloog
 tools-$(BUILD_ISL) += isl
 tools-$(CONFIG_USE_SPARSE) += sparse
 tools-$(CONFIG_TARGET_apm821xx) += genext2fs
+tools-$(CONFIG_USE_GLIBC) += ldconfig-native
 
 # builddir dependencies
 $(curdir)/bison/compile := $(curdir)/flex/install
