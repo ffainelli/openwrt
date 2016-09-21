@@ -33,6 +33,12 @@ ifdef CONFIG_USE_MKLIBS
   endef
 endif
 
+ifdef CONFIG_USE_GLIBC
+  define ldconfig
+	(cd $(TARGET_DIR); $(STAGING_DIR_HOST)/bin/ldconfig -r . -v)
+  endef
+endif
+
 # where to build (and put) .ipk packages
 opkg = \
   IPKG_NO_SCRIPT=1 \
@@ -76,4 +82,5 @@ define prepare_rootfs
 	rm -f $(1)/usr/lib/opkg/info/*.prerm*
 	$(if $(CONFIG_CLEAN_IPKG),rm -rf $(1)/usr/lib/opkg)
 	$(call mklibs,$(1))
+	$(call ldconfig)
 endef
