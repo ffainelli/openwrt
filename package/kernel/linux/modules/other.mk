@@ -1007,3 +1007,18 @@ define KernelPackage/bmp085-spi/description
 endef
 
 $(eval $(call KernelPackage,bmp085-spi))
+
+
+define KernelPackage/fpga-mgr
+  SUBMENU:=$(OTHER_MENU)
+  TITLE:=FPGA Configuration Framework
+  KCONFIG:=CONFIG_FPGA
+  FILES:=$(LINUX_DIR)/drivers/fpga/fpga-mgr.ko
+  AUTOLOAD:=$(call AutoProbe,fpga-mgr)
+endef
+
+define KernelPackage/fpga-mgr/description
+  Kernel module for the FPGA manager subsystem
+endef
+
+$(eval $(call KernelPackage,fpga-mgr))
