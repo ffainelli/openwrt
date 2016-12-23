@@ -7,6 +7,7 @@
 include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/image.mk
 
+ZIMAGE:=$(BIN_DIR)/$(IMG_PREFIX)-zImage
 UIMAGE:=$(BIN_DIR)/$(IMG_PREFIX)-uImage
 fs_squash:=squashfs-only
 fs_all:=all
@@ -15,9 +16,11 @@ fs_64k:=64k
 fs_128k:=128k
 
 define Image/BuildKernel
+	cp $(KDIR)/zImage $(ZIMAGE)
 	cp $(KDIR)/uImage $(UIMAGE)
 ifeq ($(CONFIG_TARGET_ROOTFS_INITRAMFS),y)
 	cp $(KDIR)/uImage-initramfs $(UIMAGE)-initramfs
+	cp $(KDIR)/zImage-initramfs $(ZIMAGE)-initramfs
 endif
 endef
 
