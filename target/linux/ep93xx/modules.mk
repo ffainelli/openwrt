@@ -101,3 +101,18 @@ endef
 
 $(eval $(call KernelPackage,touchscreen-ep93xx))
 
+define KernelPackage/eth-ep93xx
+  SUBMENU:=$(NETWORK_DEVICES_MENU)
+  TITLE:=EP93xx Ethernet driver
+  DEPENDS:=+kmod-mii
+  FILES:=$(LINUX_DIR)/drivers/net/ethernet/cirrus/ep93xx_eth.ko
+  KCONFIG:=CONFIG_EP93XX_ETH
+  AUTOLOAD:=$(call AutoProbe,ep93xx_eth)
+endef
+
+define KernelPackage/eth-ep93xx/description
+  Kernel module for the Cirrus Logic EP93xx SoC Ethernet core
+endef
+
+$(eval $(call KernelPackage,eth-ep93xx))
+
