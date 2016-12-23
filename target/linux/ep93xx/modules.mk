@@ -116,3 +116,18 @@ endef
 
 $(eval $(call KernelPackage,eth-ep93xx))
 
+
+define KernelPackage/ts73xx-fpga
+  SUBMENU:=$(OTHER_MENU)
+  TITLE:=TS-73xx FPGA manager driver
+  DEPENDS:=+kmod-fpga-mgr
+  FILES:=$(LINUX_DIR)/drivers/fpga/ts73xx-fpga.ko
+  KCONFIG:=CONFIG_FPGA_MGR_TS73XX
+  AUTOLOAD:=$(call AutoProbe,ts73xx-fpga)
+endef
+
+define Kernelpackage/ts73xx-fpga/description
+  Kernel module for the TS-7300 FPGA load
+endef
+
+$(eval $(call KernelPackage,ts73xx-fpga))
