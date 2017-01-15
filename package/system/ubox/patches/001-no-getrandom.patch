@@ -1,0 +1,13 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 62de1d4b9648..3474af320ba3 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -24,8 +24,6 @@ IF(getrandom)
+   INSTALL(TARGETS getrandom
+           RUNTIME DESTINATION bin
+   )
+-ELSE()
+-  message( FATAL_ERROR "Kernel too old, missing SYS_getrandom system call")
+ ENDIF()
+ 
+ ADD_EXECUTABLE(kmodloader kmodloader.c)
