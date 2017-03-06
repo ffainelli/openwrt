@@ -20,6 +20,7 @@ PKG_INSTALL:=1
 PKG_FIXUP:=autoreconf
 
 include $(INCLUDE_DIR)/package.mk
+include $(INCLUDE_DIR)/kernel.mk
 
 define Package/libnl/default
   SECTION:=libs
@@ -79,6 +80,7 @@ define Package/libnl/description
 endef
 
 TARGET_CFLAGS += -ffunction-sections $(FPIC)
+TARGET_CPPFLAGS += -I$(LINUX_DIR)/user_headers/include
 
 CONFIGURE_ARGS += \
 	--disable-debug

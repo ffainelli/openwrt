@@ -19,6 +19,7 @@ PKG_FLAGS:=nonshared
 
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/cmake.mk
+include $(INCLUDE_DIR)/kernel.mk
 
 define Package/umbim
   SECTION:=net
@@ -33,7 +34,8 @@ define Package/umbim/description
 endef
 
 TARGET_CFLAGS += \
-	-I$(STAGING_DIR)/usr/include -ffunction-sections -fdata-sections
+	-I$(STAGING_DIR)/usr/include -ffunction-sections -fdata-sections \
+	-I$(LINUX_DIR)/user_headers/include
 
 TARGET_LDFLAGS += -Wl,--gc-sections
 

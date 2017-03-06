@@ -60,7 +60,8 @@ $(call Package/dnsmasq/Default)
   TITLE += (with DNSSEC, DHCPv6, Auth DNS, IPset, Conntrack, NO_ID enabled by default)
   DEPENDS+=+PACKAGE_dnsmasq_full_dnssec:libnettle \
 	+PACKAGE_dnsmasq_full_ipset:kmod-ipt-ipset \
-	+PACKAGE_dnsmasq_full_conntrack:libnetfilter-conntrack
+	+PACKAGE_dnsmasq_full_conntrack:libnetfilter-conntrack \
+	+libmnl
   VARIANT:=full
 endef
 
@@ -121,6 +122,10 @@ Package/dnsmasq-full/conffiles = $(Package/dnsmasq/conffiles)
 
 TARGET_CFLAGS += -ffunction-sections -fdata-sections
 TARGET_LDFLAGS += -Wl,--gc-sections
+
+ifeq ($(CONFIG_PACKAGE_dnsmasq_full_conntrack),y)
+TARGET_LDFLAGS += -lmnl
+endif
 
 COPTS = $(if $(CONFIG_IPV6),,-DNO_IPV6)
 

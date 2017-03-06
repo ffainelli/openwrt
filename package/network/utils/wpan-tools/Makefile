@@ -24,6 +24,8 @@ define Package/wpan-tools
   DEPENDS:= +libnl
 endef
 
+TARGET_CPPFLAGS+=-I$(LINUX_DIR)/user_headers/
+
 define Build/Configure
   $(call Build/Configure/Default)
 endef

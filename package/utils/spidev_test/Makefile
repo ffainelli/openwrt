@@ -27,6 +27,8 @@ define Package/spidev-test/description
   SPI testing utility.
 endef
 
+TARGET_CFLAGS+=-I$(LINUX_DIR)/user_headers/include
+
 define Build/Compile
 	$(TARGET_CC) $(TARGET_CFLAGS) -o $(PKG_BUILD_DIR)/spidev_test \
 		$(PKG_BUILD_DIR)/spidev_test.c
