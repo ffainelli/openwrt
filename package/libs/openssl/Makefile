@@ -189,7 +189,7 @@ define Build/Configure
 			--prefix=/usr \
 			--openssldir=/etc/ssl \
 			$(TARGET_CPPFLAGS) \
-			$(TARGET_LDFLAGS) -ldl \
+			"$(TARGET_LDFLAGS) -ldl" \
 			$(if $(CONFIG_OPENSSL_OPTIMIZE_SPEED),,-DOPENSSL_SMALL_FOOTPRINT) \
 			$(OPENSSL_NO_CIPHERS) \
 			$(OPENSSL_OPTIONS) \
