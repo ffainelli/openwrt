@@ -1,0 +1,39 @@
+From f4b3bcdf288515e01a697283465afa29bb1f22d6 Mon Sep 17 00:00:00 2001
+From: Florian Fainelli <f.fainelli@gmail.com>
+Date: Thu, 11 May 2017 11:17:44 -0700
+Subject: [PATCH] system-linux: Provide definitions for
+ IFLA_VLXAN_{PORT,LOCAL6,GROUP6}
+
+Signed-off-by: Florian Fainelli <f.fainelli@gmail.com>
+---
+ system-linux.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/system-linux.c b/system-linux.c
+index 3e11bdfccbad..17d15f7a02eb 100644
+--- a/system-linux.c
++++ b/system-linux.c
+@@ -2557,6 +2557,20 @@ failure:
+ #endif
+ 
+ #ifdef IFLA_VXLAN_MAX
++
++#ifndef IFLA_VXLAN_PORT
++#define IFLA_VXLAN_PORT	(IFLA_VXLAN_L3MISS + 1)
++#endif
++
++#ifndef IFLA_VXLAN_GROUP6
++#define IFLA_VXLAN_GROUP6 (IFLA_VXLAN_PORT + 1)
++#endif
++
++
++#ifndef IFLA_VXLAN_LOCAL6
++#define IFLA_VXLAN_LOCAL6 (IFLA_VXLAN_GROUP6 + 1)
++#endif
++
+ static int system_add_vxlan(const char *name, const unsigned int link, struct blob_attr **tb, bool v6)
+ {
+ 	struct blob_attr *tb_data[__VXLAN_DATA_ATTR_MAX];
+-- 
+2.12.2
+
