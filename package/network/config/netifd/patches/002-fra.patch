@@ -1,0 +1,36 @@
+From bf1ff26497837996511aeb21a4b0692333443428 Mon Sep 17 00:00:00 2001
+From: Florian Fainelli <f.fainelli@gmail.com>
+Date: Fri, 7 Jul 2017 14:48:19 -0700
+Subject: [PATCH] system-linux: Provide definitions for FRA_SUPPRESS_PREFIXLEN
+
+Signed-off-by: Florian Fainelli <f.fainelli@gmail.com>
+---
+ system-linux.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/system-linux.c b/system-linux.c
+index ae0833766ea6..78e59c188914 100644
+--- a/system-linux.c
++++ b/system-linux.c
+@@ -2095,6 +2095,18 @@ bool system_resolve_rpfilter(const char *filter, unsigned int *id)
+ 	return true;
+ }
+ 
++#ifndef FRA_UNUSED6
++#define FRA_UNUSED6		(FRA_FLOW + 1)
++#endif
++
++#ifndef FRA_SUPPRESS_IFGROUP
++#define FRA_SUPPRESS_IFGROUP	(FRA_UNUSED6 + 1)
++#endif
++
++#ifndef FRA_SUPPRESS_PREFIXLEN
++#define FRA_SUPPRESS_PREFIXLEN	(FRA_SUPPRESS_IFGROUP + 1)
++#endif
++
+ static int system_iprule(struct iprule *rule, int cmd)
+ {
+ 	int alen = ((rule->flags & IPRULE_FAMILY) == IPRULE_INET4) ? 4 : 16;
+-- 
+2.13.0
+
